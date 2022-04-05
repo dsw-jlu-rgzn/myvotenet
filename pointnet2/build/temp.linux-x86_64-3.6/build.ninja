@@ -1,0 +1,34 @@
+ninja_required_version = 1.3
+cxx = c++
+nvcc = /usr/local/cuda/bin/nvcc
+
+cflags = -pthread -DNDEBUG -g -fwrapv -O2 -Wall -g -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2 -fPIC -I/usr/local/lib/python3.6/dist-packages/torch/include -I/usr/local/lib/python3.6/dist-packages/torch/include/torch/csrc/api/include -I/usr/local/lib/python3.6/dist-packages/torch/include/TH -I/usr/local/lib/python3.6/dist-packages/torch/include/THC -I/usr/local/cuda/include -I/usr/include/python3.6m -c
+post_cflags = -O2 -I_ext_src/include -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=_ext -D_GLIBCXX_USE_CXX11_ABI=0 -std=c++14
+cuda_cflags = -I/usr/local/lib/python3.6/dist-packages/torch/include -I/usr/local/lib/python3.6/dist-packages/torch/include/torch/csrc/api/include -I/usr/local/lib/python3.6/dist-packages/torch/include/TH -I/usr/local/lib/python3.6/dist-packages/torch/include/THC -I/usr/local/cuda/include -I/usr/include/python3.6m -c
+cuda_post_cflags = -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -O2 -I_ext_src/include -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=_ext -D_GLIBCXX_USE_CXX11_ABI=0 -gencode=arch=compute_61,code=sm_61 -std=c++14
+ldflags = 
+
+rule compile
+  command = $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags
+  depfile = $out.d
+  deps = gcc
+
+rule cuda_compile
+  command = $nvcc $cuda_cflags -c $in -o $out $cuda_post_cflags
+
+
+
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/ball_query.o: compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/ball_query.cpp
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/bindings.o: compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/bindings.cpp
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/group_points.o: compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/group_points.cpp
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/interpolate.o: compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/interpolate.cpp
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/sampling.o: compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/sampling.cpp
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/ball_query_gpu.o: cuda_compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/ball_query_gpu.cu
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/group_points_gpu.o: cuda_compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/group_points_gpu.cu
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/interpolate_gpu.o: cuda_compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/interpolate_gpu.cu
+build /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/build/temp.linux-x86_64-3.6/_ext_src/src/sampling_gpu.o: cuda_compile /nfs/volume-315-5/shuweidong_i/votenet_methods/votenet/pointnet2/_ext_src/src/sampling_gpu.cu
+
+
+
+
+
