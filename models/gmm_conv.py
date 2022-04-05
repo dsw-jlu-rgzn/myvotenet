@@ -2,6 +2,7 @@ import torch
 from torch.nn import Parameter
 from torch_geometric.nn.conv import MessagePassing
 import sys
+import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
@@ -17,6 +18,7 @@ class GMMConv(MessagePassing):##
                  dim,
                  kernel_size,
                  bias=True,
+                 node_dim=0,
                  **kwargs):
         super(GMMConv, self).__init__(aggr='add', **kwargs)
 
@@ -24,7 +26,7 @@ class GMMConv(MessagePassing):##
         self.out_channels = out_channels
         self.dim = dim
         self.kernel_size = kernel_size
-
+        self.node_dim = node_dim
         self.lin = torch.nn.Linear(in_channels,
                                    out_channels * kernel_size,
                                    bias=False)

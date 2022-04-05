@@ -132,9 +132,9 @@ class ProposalModule(nn.Module):
         z = self.relation_fc_1(net)#8*128*256
         z = F.relu(self.relation_fc_2(z))
         z = z.transpose(2,1)#8*256*128
-        eps = torch.bmm(z, z.t())
+        eps = torch.bmm(z, z.transpose(2,1))
         _, indices = torch.topk(eps, k=16, dim=1)# 16, 256
-        cls_w = self.predict_sem.weight.unsqueeze(0),squeeze(-1).repeat(batch_size, 1, 1)
+        cls_w = self.predict_sem.weight.unsqueeze(0).squeeze(-1).repeat(batch_size, 1, 1)
         represent = torch.bmm(cls_prob, cls_w)
         cls_pred = torch.max(cls_prob,2)[1]
         relation = torch.empty(batch_size, 2, 16*256, dtype=torch.long).to(device)
@@ -154,7 +154,7 @@ class ProposalModule(nn.Module):
             theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
             theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
             U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
-            f[batch_id] = self.gaussian(represent[batch_id], relation[batch_id], U)
+            f[batch_id] = self.gaussian(represent[batch_id], relation_, U)
         f2 = F.relu(self.sg_conv_1(f.transpose(2,1)))
         h = F.relu(self.sg_conv_2(f2))
         new_net = torch.cat([net, h],dim=1)
