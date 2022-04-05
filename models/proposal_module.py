@@ -14,7 +14,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'pointnet2'))
 from pointnet2_modules import PointnetSAModuleVotes
 import pointnet2_utils
-
+from gmm_conv import GMMConv
 def decode_scores(net, end_points, num_class, num_heading_bin, num_size_cluster, mean_size_arr):
     net_transposed = net.transpose(2,1) # (batch_size, 1024, ..)
     batch_size = net_transposed.shape[0]
@@ -79,6 +79,11 @@ class ProposalModule(nn.Module):
         self.predict_sem = torch.nn.Conv1d(128, self.num_class, 1)
         self.relation_fc_1 = torch.nn.Conv1d(128,128,1)
         self.relation_fc_2 = torch.nn.Conv1d(128,128,1)
+        self.gaussian = GMMConv(128, 128, dim=3, kernel_size=25)
+        self.sg_conv_1 = torch.nn.Conv1d(128,256,1)
+        self.sg_conv_2 = torch.nn.Conv1d(256,128,1)
+        self.conv3_5 = torch.nn.Conv1d(256,128,1)
+        self.bn3 = torch.nn.BatchNorm1d(128)
     def _region_classification(self, features,base_xyz):
         residual_center = self.predict_center(features)
         cls_score = self.predict_sem(features)
@@ -136,6 +141,7 @@ class ProposalModule(nn.Module):
         relation[:, 1] = indices.view(batch_size, -1)
         # coord_i, coord_j = torch.zeros(batch_size, 16*256, 3), torch.zeros(batch_size, 16*256, 3)
         # coord_i = center_pred[relation[:,0]]
+        f = torch.zeros_like(z)
         for batch_id in range(batch_size):
             center_ = center_pred[batch_id]
             relation_ = relation[batch_id]
@@ -147,9 +153,14 @@ class ProposalModule(nn.Module):
             theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
             theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
             U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
-        net = self.conv3(net) # (batch_size, 2+3+num_heading_bin*2+num_size_cluster*4, num_proposal)
+            f[batch_id] = self.gaussian(represent[batch_id], relation[batch_id], U)
+        f2 = F.relu(self.sg_conv_1(f.transpose(2,1)))
+        h = F.relu(self.sg_conv_2(f2))
+        new_net = torch.cat([net, h],dim=1)
+        new_net =  F.relu(self.bn3(self.conv3_5(new_net)))
+        new_net = self.conv3(new_net) # (batch_size, 2+3+num_heading_bin*2+num_size_cluster*4, num_proposal)
 
-        end_points = decode_scores(net, end_points, self.num_class, self.num_heading_bin, self.num_size_cluster, self.mean_size_arr)
+        end_points = decode_scores(new_net, end_points, self.num_class, self.num_heading_bin, self.num_size_cluster, self.mean_size_arr)
         return end_points
 
 if __name__=='__main__':
