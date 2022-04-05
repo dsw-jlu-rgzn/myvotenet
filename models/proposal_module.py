@@ -84,9 +84,11 @@ class ProposalModule(nn.Module):
         self.sg_conv_2 = torch.nn.Conv1d(256,128,1)
         self.conv3_5 = torch.nn.Conv1d(256,128,1)
         self.bn3 = torch.nn.BatchNorm1d(128)
-    def _region_classification(self, features,base_xyz):
-        residual_center = self.predict_center(features)
-        cls_score = self.predict_sem(features)
+
+
+    def _region_classification(self, features, base_xyz):
+        residual_center = self.predict_center(features)# (batch_size, 128, 256)
+        cls_score = self.predict_sem(features) # (b, c, 256)
         residual_center = residual_center.transpose(2, 1)  # (batch_size, 256, ..)
         cls_score = cls_score.transpose(2, 1)
         center = base_xyz + residual_center  # (batch_size, num_proposal, 3)
@@ -123,19 +125,18 @@ class ProposalModule(nn.Module):
 
         # --------- PROPOSAL GENERATION ---------
         device = features.device
-
+        batch_size = features.shape[0]
         net = F.relu(self.bn1(self.conv1(features)))
-        net = F.relu(self.bn2(self.conv2(net)))
-        cls_prob, center_pred = self._region_classification(net)
+        net = F.relu(self.bn2(self.conv2(net)))#b*128*256
+        cls_prob, center_pred = self._region_classification(net, xyz)#b, 256, 18  | b, 256, 3
         z = self.relation_fc_1(net)#8*128*256
         z = F.relu(self.relation_fc_2(z))
         z = z.transpose(2,1)#8*256*128
         eps = torch.bmm(z, z.t())
-        _, indices = torch.topk(eps, k=16, dim=1)
-        cls_w = self.predict_sem.weight
+        _, indices = torch.topk(eps, k=16, dim=1)# 16, 256
+        cls_w = self.predict_sem.weight.unsqueeze(0),squeeze(-1).repeat(batch_size, 1, 1)
         represent = torch.bmm(cls_prob, cls_w)
         cls_pred = torch.max(cls_prob,2)[1]
-        batch_size = features.shape[0]
         relation = torch.empty(batch_size, 2, 16*256, dtype=torch.long).to(device)
         relation[:, 0] = torch.Tensor(list(range(256)) * 16).unsqueeze(0).repeat(batch_size,1)
         relation[:, 1] = indices.view(batch_size, -1)

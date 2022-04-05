@@ -1,7 +1,11 @@
 import torch
 from torch.nn import Parameter
 from torch_geometric.nn.conv import MessagePassing
-from .inits import reset, glorot, zeros
+import sys
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(BASE_DIR)
+sys.path.append(os.path.join(ROOT_DIR, 'models'))
+from inits import reset, glorot, zeros
 
 EPS = 1e-15
 
