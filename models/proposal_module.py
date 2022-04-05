@@ -75,6 +75,18 @@ class ProposalModule(nn.Module):
         self.bn1 = torch.nn.BatchNorm1d(128)
         self.bn2 = torch.nn.BatchNorm1d(128)
 
+        self.predict_center = torch.nn.Conv1d(128,3,1)#+self.num_class
+        self.predict_sem = torch.nn.Conv1d(128, self.num_class, 1)
+        self.relation_fc_1 = torch.nn.Conv1d(128,128,1)
+        self.relation_fc_2 = torch.nn.Conv1d(128,128,1)
+    def _region_classification(self, features,base_xyz):
+        residual_center = self.predict_center(features)
+        cls_score = self.predict_sem(features)
+        residual_center = residual_center.transpose(2, 1)  # (batch_size, 256, ..)
+        cls_score = cls_score.transpose(2, 1)
+        center = base_xyz + residual_center  # (batch_size, num_proposal, 3)
+        cls_prob = F.softmax(cls_score,dim=2)
+        return cls_prob, center
     def forward(self, xyz, features, end_points):
         """
         Args:
@@ -105,8 +117,36 @@ class ProposalModule(nn.Module):
         end_points['aggregated_vote_inds'] = sample_inds # (batch_size, num_proposal,) # should be 0,1,2,...,num_proposal
 
         # --------- PROPOSAL GENERATION ---------
+        device = features.device
+
         net = F.relu(self.bn1(self.conv1(features)))
         net = F.relu(self.bn2(self.conv2(net)))
+        cls_prob, center_pred = self._region_classification(net)
+        z = self.relation_fc_1(net)#8*128*256
+        z = F.relu(self.relation_fc_2(z))
+        z = z.transpose(2,1)#8*256*128
+        eps = torch.bmm(z, z.t())
+        _, indices = torch.topk(eps, k=16, dim=1)
+        cls_w = self.predict_sem.weight
+        represent = torch.bmm(cls_prob, cls_w)
+        cls_pred = torch.max(cls_prob,2)[1]
+        batch_size = features.shape[0]
+        relation = torch.empty(batch_size, 2, 16*256, dtype=torch.long).to(device)
+        relation[:, 0] = torch.Tensor(list(range(256)) * 16).unsqueeze(0).repeat(batch_size,1)
+        relation[:, 1] = indices.view(batch_size, -1)
+        # coord_i, coord_j = torch.zeros(batch_size, 16*256, 3), torch.zeros(batch_size, 16*256, 3)
+        # coord_i = center_pred[relation[:,0]]
+        for batch_id in range(batch_size):
+            center_ = center_pred[batch_id]
+            relation_ = relation[batch_id]
+            # coord_i[batch_id] = center_[relation_[0]]
+            # coord_j[batch_id] = center_[relation_[1]]
+            coord_i = center_[relation_[0]]
+            coord_j = center_[relation_[1]]
+            d = torch.sqrt((coord_i[:, 0] - coord_j[:, 0]) ** 2 + (coord_i[:, 1] - coord_j[:, 1]) ** 2 + (coord_i[:, 2] - coord_j[:, 2]) ** 2)
+            theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
+            theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
+            U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
         net = self.conv3(net) # (batch_size, 2+3+num_heading_bin*2+num_size_cluster*4, num_proposal)
 
         end_points = decode_scores(net, end_points, self.num_class, self.num_heading_bin, self.num_size_cluster, self.mean_size_arr)
