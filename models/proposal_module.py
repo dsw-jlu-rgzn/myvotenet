@@ -10,6 +10,7 @@ import numpy as np
 import os
 import sys
 import dgl
+from dgl import graph
 import torch as th
 from dgl.nn.pytorch.conv import GMMConv
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -97,7 +98,7 @@ class ProposalModule(nn.Module):
         cls_score = cls_score.transpose(2, 1)
         center = base_xyz + residual_center  # (batch_size, num_proposal, 3)
         cls_prob = F.softmax(cls_score,dim=2)
-        return cls_prob, center
+        return cls_prob, center#2*256*18,2*256*3
     def forward(self, xyz, features, end_points):
         """
         Args:
@@ -132,51 +133,55 @@ class ProposalModule(nn.Module):
         batch_size = features.shape[0]
         net = F.relu(self.bn1(self.conv1(features)))
         net = F.relu(self.bn2(self.conv2(net)))#b*128*256
-        cls_prob, center_pred = self._region_classification(net, xyz)#b, 256, 18  | b, 256, 3
-        z = self.relation_fc_1(net)#8*128*256
-        z = F.relu(self.relation_fc_2(z))
-        z = z.transpose(2,1)#8*256*128
-        eps = torch.bmm(z, z.transpose(2,1))
-        _, indices = torch.topk(eps, k=16, dim=1)# 16, 256
-        cls_w = self.predict_sem.weight.unsqueeze(0).squeeze(-1).repeat(batch_size, 1, 1)
-        represent = torch.bmm(cls_prob, cls_w)
-        cls_pred = torch.max(cls_prob,2)[1]
-        relation = torch.empty(batch_size, 2, 16*256, dtype=torch.long).to(device)
-        relation[:, 0] = torch.Tensor(list(range(256)) * 16).unsqueeze(0).repeat(batch_size,1)
-        relation[:, 1] = indices.view(batch_size, -1)
-        # coord_i, coord_j = torch.zeros(batch_size, 16*256, 3), torch.zeros(batch_size, 16*256, 3)
-        # coord_i = center_pred[relation[:,0]]
-        f = torch.ones_like(z)
-        # represent = torch.randn(8,256,128).to(device)
-        for batch_id in range(batch_size):
-            center_ = center_pred[batch_id]
-            relation_ = relation[batch_id]
-            # coord_i[batch_id] = center_[relation_[0]]
-            # coord_j[batch_id] = center_[relation_[1]]
-            coord_i = center_[relation_[0]]
-            coord_j = center_[relation_[1]]
-            d = torch.sqrt((coord_i[:, 0] - coord_j[:, 0]) ** 2 + (coord_i[:, 1] - coord_j[:, 1]) ** 2 + (coord_i[:, 2] - coord_j[:, 2]) ** 2)
-            theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
-            theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
-            U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
-
-            u = relation_[0]
-            v = relation_[1]
-            feature = represent[batch_id]
-            pseudo = U
-            g = dgl.graph((v,u))
-            print(g.in_degrees())
-            f[batch_id] = self.GMM(g, feature, pseudo)
-
-
-            #f[batch_id] = self.gaussian(represent[batch_id], relation_, U)
-            #f[batch_id] = torch.randn(256,128).to(device)
-        f2 = F.relu(self.sg_conv_1(f.transpose(2,1)))
-        h = F.relu(self.sg_conv_2(f2))
-        new_net = torch.cat([net, h],dim=1)
-        new_net =  F.relu(self.bn3(self.conv3_5(new_net)))
-        new_net = self.conv3(new_net) # (batch_size, 2+3+num_heading_bin*2+num_size_cluster*4, num_proposal)
-
+        # cls_prob, center_pred = self._region_classification(net, xyz)#b, 256, 18  | b, 256, 3
+        # z = self.relation_fc_1(net)#8*128*256
+        # z = F.relu(self.relation_fc_2(z))
+        # z = z.transpose(2,1)#8*256*128
+        # eps = torch.bmm(z, z.transpose(2,1))#
+        # _, indices = torch.topk(eps, k=16, dim=1)# 16, 256
+        # cls_w = self.predict_sem.weight.unsqueeze(0).squeeze(-1).repeat(batch_size, 1, 1)
+        # represent = torch.bmm(cls_prob, cls_w)
+        # cls_pred = torch.max(cls_prob,2)[1]
+        # relation = torch.empty(batch_size, 2, 16*256, dtype=torch.long).to(device)
+        # relation[:, 0] = torch.Tensor(list(range(256)) * 16).unsqueeze(0).repeat(batch_size,1)
+        # relation[:, 1] = indices.view(batch_size, -1)
+        # # coord_i, coord_j = torch.zeros(batch_size, 16*256, 3), torch.zeros(batch_size, 16*256, 3)
+        # # coord_i = center_pred[relation[:,0]]
+        # f = torch.ones_like(z)
+        # # represent = torch.randn(8,256,128).to(device)
+        # for batch_id in range(batch_size):
+        #     center_ = center_pred[batch_id]
+        #     relation_ = relation[batch_id]
+        #     # coord_i[batch_id] = center_[relation_[0]]
+        #     # coord_j[batch_id] = center_[relation_[1]]
+        #     coord_i = center_[relation_[0]]
+        #     coord_j = center_[relation_[1]]
+        #     d = torch.sqrt((coord_i[:, 0] - coord_j[:, 0]) ** 2 + (coord_i[:, 1] - coord_j[:, 1]) ** 2 + (coord_i[:, 2] - coord_j[:, 2]) ** 2)
+        #     theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
+        #     theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
+        #     U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
+        #
+        #     u = relation_[0]
+        #     v = relation_[1]
+        #     feature = represent[batch_id]
+        #     pseudo = U
+        #     g = dgl.DGLGraph()
+        #     g.add_nodes(256)
+        #     g.add_edges(v,u)
+        #
+        #     #print(g.in_degrees())
+        #     f[batch_id] = self.GMM(g, feature, pseudo)
+        #
+        #
+        #     #f[batch_id] = self.gaussian(represent[batch_id], relation_, U)
+        #     #f[batch_id] = torch.randn(256,128).to(device)
+        # f2 = F.relu(self.sg_conv_1(f.transpose(2,1)))
+        # h = F.relu(self.sg_conv_2(f2))
+        # h = torch.ones_like(h)
+        # new_net = torch.cat([net, h],dim=1)
+        # new_net =  F.relu(self.bn3(self.conv3_5(new_net)))
+        # new_net = self.conv3(new_net) # (batch_size, 2+3+num_heading_bin*2+num_size_cluster*4, num_proposal)
+        new_net = self.conv3(net)
         end_points = decode_scores(new_net, end_points, self.num_class, self.num_heading_bin, self.num_size_cluster, self.mean_size_arr)
         return end_points
 

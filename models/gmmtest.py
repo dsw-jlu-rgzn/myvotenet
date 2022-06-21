@@ -1,7 +1,8 @@
 import dgl
 import numpy as np
 import torch as th
-from dgl.nn import GMMConv
+#from dgl.nn. import GMMConv
+from dgl.nn.pytorch.conv import GMMConv
 import torch
 # g = dgl.graph(([0,1,2,3,2,5],[1,2,3,4,0,3]))
 # g = dgl.add_self_loop(g)
@@ -22,7 +23,9 @@ u = relation[0][0].cuda()
 v = relation[0][1].cuda()
 feature = represent[0].cuda()
 pseudo = th.ones(4096,3).cuda()
-g = dgl.graph((v,u))
+g = dgl.DGLGraph()
+g.add_nodes(256)
+g.add_edges(u,v)
 print(g.in_degrees())
 GMM = GMMConv(128,128,3,25,'mean').cuda()
 out = GMM(g, feature, pseudo)
