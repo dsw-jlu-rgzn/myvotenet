@@ -19,7 +19,7 @@ sys.path.append(os.path.join(ROOT_DIR, 'pointnet2'))
 from pointnet2_modules import PointnetSAModuleVotes
 import pointnet2_utils
 #from gmm_conv import GMMConv
-def decode_scores(net, end_points, num_class, num_heading_bin, num_size_cluster, mean_size_arr):
+def decode_scores(net, end_points, num_class, num_heading_bin, num_size_cluster, mean_size_arr, gcn_pred=None):
     net_transposed = net.transpose(2,1) # (batch_size, 1024, ..)
     batch_size = net_transposed.shape[0]
     num_proposal = net_transposed.shape[1]
@@ -43,7 +43,9 @@ def decode_scores(net, end_points, num_class, num_heading_bin, num_size_cluster,
     end_points['size_residuals_normalized'] = size_residuals_normalized
     end_points['size_residuals'] = size_residuals_normalized * torch.from_numpy(mean_size_arr.astype(np.float32)).cuda().unsqueeze(0).unsqueeze(0)
 
-    sem_cls_scores = net_transposed[:,:,5+num_heading_bin*2+num_size_cluster*4:] # Bxnum_proposalx10
+    sem_cls_scores = net_transposed[:,:,5+num_heading_bin*2+num_size_cluster*4:] # Bxnum_proposalx10 2*256*18
+    if gcn_pred is not None:
+        end_points['sem_cls_scores_gcn'] = gcn_pred
     end_points['sem_cls_scores'] = sem_cls_scores
     return end_points
 
@@ -80,7 +82,7 @@ class ProposalModule(nn.Module):
         self.bn2 = torch.nn.BatchNorm1d(128)
 
         self.predict_center = torch.nn.Conv1d(128,3,1)#+self.num_class
-        self.predict_sem = torch.nn.Conv1d(128, self.num_class, 1)
+        self.predict_sem = torch.nn.Linear(128, self.num_class)
         self.relation_fc_1 = torch.nn.Conv1d(128,128,1)
         self.relation_fc_2 = torch.nn.Conv1d(128,128,1)
         self.GMM = GMMConv(128, 128, 3, 25, 'mean')
@@ -92,13 +94,14 @@ class ProposalModule(nn.Module):
 
 
     def _region_classification(self, features, base_xyz):
-        residual_center = self.predict_center(features)# (batch_size, 128, 256)
-        cls_score = self.predict_sem(features) # (b, c, 256)
-        residual_center = residual_center.transpose(2, 1)  # (batch_size, 256, ..)
-        cls_score = cls_score.transpose(2, 1)
-        center = base_xyz + residual_center  # (batch_size, num_proposal, 3)
+        #residual_center = self.predict_center(features)# (batch_size, 128, 256)
+        features = features.transpose(2,1)#b*256*128
+        cls_score = self.predict_sem(features) # (b, 256, c)
+        #residual_center = residual_center.transpose(2, 1)  # (batch_size, 256, ..)
+        #cls_score = cls_score.transpose(2, 1)
+        #center = base_xyz + residual_center  # (batch_size, num_proposal, 3)
         cls_prob = F.softmax(cls_score,dim=2)
-        return cls_prob, center#2*256*18,2*256*3
+        return cls_prob#, center#2*256*18,2*256*3
     def forward(self, xyz, features, end_points):
         """
         Args:
@@ -129,60 +132,68 @@ class ProposalModule(nn.Module):
         end_points['aggregated_vote_inds'] = sample_inds # (batch_size, num_proposal,) # should be 0,1,2,...,num_proposal
 
         # --------- PROPOSAL GENERATION ---------
+        #TODO 需要添加一个semantic gcn loss
         device = features.device
         batch_size = features.shape[0]
-        net = F.relu(self.bn1(self.conv1(features)))
-        net = F.relu(self.bn2(self.conv2(net)))#b*128*256
-        # cls_prob, center_pred = self._region_classification(net, xyz)#b, 256, 18  | b, 256, 3
-        # z = self.relation_fc_1(net)#8*128*256
-        # z = F.relu(self.relation_fc_2(z))
-        # z = z.transpose(2,1)#8*256*128
-        # eps = torch.bmm(z, z.transpose(2,1))#
-        # _, indices = torch.topk(eps, k=16, dim=1)# 16, 256
-        # cls_w = self.predict_sem.weight.unsqueeze(0).squeeze(-1).repeat(batch_size, 1, 1)
-        # represent = torch.bmm(cls_prob, cls_w)
-        # cls_pred = torch.max(cls_prob,2)[1]
-        # relation = torch.empty(batch_size, 2, 16*256, dtype=torch.long).to(device)
-        # relation[:, 0] = torch.Tensor(list(range(256)) * 16).unsqueeze(0).repeat(batch_size,1)
-        # relation[:, 1] = indices.view(batch_size, -1)
-        # # coord_i, coord_j = torch.zeros(batch_size, 16*256, 3), torch.zeros(batch_size, 16*256, 3)
-        # # coord_i = center_pred[relation[:,0]]
-        # f = torch.ones_like(z)
-        # # represent = torch.randn(8,256,128).to(device)
-        # for batch_id in range(batch_size):
-        #     center_ = center_pred[batch_id]
-        #     relation_ = relation[batch_id]
-        #     # coord_i[batch_id] = center_[relation_[0]]
-        #     # coord_j[batch_id] = center_[relation_[1]]
-        #     coord_i = center_[relation_[0]]
-        #     coord_j = center_[relation_[1]]
-        #     d = torch.sqrt((coord_i[:, 0] - coord_j[:, 0]) ** 2 + (coord_i[:, 1] - coord_j[:, 1]) ** 2 + (coord_i[:, 2] - coord_j[:, 2]) ** 2)
-        #     theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
-        #     theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
-        #     U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
-        #
-        #     u = relation_[0]
-        #     v = relation_[1]
-        #     feature = represent[batch_id]
-        #     pseudo = U
-        #     g = dgl.DGLGraph()
-        #     g.add_nodes(256)
-        #     g.add_edges(v,u)
-        #
-        #     #print(g.in_degrees())
-        #     f[batch_id] = self.GMM(g, feature, pseudo)
-        #
-        #
-        #     #f[batch_id] = self.gaussian(represent[batch_id], relation_, U)
-        #     #f[batch_id] = torch.randn(256,128).to(device)
-        # f2 = F.relu(self.sg_conv_1(f.transpose(2,1)))
-        # h = F.relu(self.sg_conv_2(f2))
-        # h = torch.ones_like(h)
+        net = features
+        # net = F.relu(self.bn1(self.conv1(features)))
+        # net = F.relu(self.bn2(self.conv2(net)))#b*128*256
+        cls_prob = self._region_classification(net, xyz)#b, 256, 18  | b, 256, 3
+        center_pred = xyz
+        z = self.relation_fc_1(net)#8*128*256
+        z = F.relu(self.relation_fc_2(z))
+        z = z.transpose(2,1)#8*256*128
+        eps = torch.bmm(z, z.transpose(2,1))#
+        _, indices = torch.topk(eps, k=16, dim=1)# 16, 256
+        cls_w = self.predict_sem.weight.unsqueeze(0).squeeze(-1).repeat(batch_size, 1, 1)
+        represent = torch.bmm(cls_prob, cls_w)
+        #cls_pred = torch.max(cls_prob,2)[1]
+        relation = torch.empty(batch_size, 2, 16*256, dtype=torch.long).to(device)
+        relation[:, 0] = torch.Tensor(list(range(256)) * 16).unsqueeze(0).repeat(batch_size,1)
+        relation[:, 1] = indices.view(batch_size, -1)
+        # coord_i, coord_j = torch.zeros(batch_size, 16*256, 3), torch.zeros(batch_size, 16*256, 3)
+        # coord_i = center_pred[relation[:,0]]
+        f = torch.ones_like(z)
+        # represent = torch.randn(8,256,128).to(device)
+        for batch_id in range(batch_size):
+            center_ = center_pred[batch_id]
+            relation_ = relation[batch_id]
+            # coord_i[batch_id] = center_[relation_[0]]
+            # coord_j[batch_id] = center_[relation_[1]]
+            coord_i = center_[relation_[0]]
+            coord_j = center_[relation_[1]]
+            d = torch.sqrt((coord_i[:, 0] - coord_j[:, 0]) ** 2 + (coord_i[:, 1] - coord_j[:, 1]) ** 2 + (coord_i[:, 2] - coord_j[:, 2]) ** 2)
+            theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
+            #theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
+            theta_z = torch.atan2((coord_j[:, 0] - coord_i[:, 0]), (coord_j[:, 2] - coord_i[:, 2]))
+            U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
+
+            u = relation_[0]
+            v = relation_[1]
+            feature = represent[batch_id]
+            pseudo = U
+            g = dgl.DGLGraph()
+            g.add_nodes(256)
+            g.add_edges(v,u)
+
+            #print(g.in_degrees())
+            #f[batch_id] = self.GMM(g, feature, pseudo)
+            f[batch_id] = feature
+
+            #f[batch_id] = self.gaussian(represent[batch_id], relation_, U)
+            #f[batch_id] = torch.randn(256,128).to(device)
+        f2 = F.relu(self.sg_conv_1(f.transpose(2,1)))
+        h = F.relu(self.sg_conv_2(f2))
+        #h = torch.ones_like(h)
         # new_net = torch.cat([net, h],dim=1)
         # new_net =  F.relu(self.bn3(self.conv3_5(new_net)))
-        # new_net = self.conv3(new_net) # (batch_size, 2+3+num_heading_bin*2+num_size_cluster*4, num_proposal)
-        new_net = self.conv3(net)
-        end_points = decode_scores(new_net, end_points, self.num_class, self.num_heading_bin, self.num_size_cluster, self.mean_size_arr)
+        new_net = net + h
+
+        new_net = F.relu(self.bn1(self.conv1(new_net)))
+        new_net = F.relu(self.bn2(self.conv2(new_net)))#b*128*256
+        new_net = self.conv3(new_net) # (batch_size, 2+3+num_heading_bin*2+num_size_cluster*4, num_proposal)
+        #new_net = self.conv3(new)
+        end_points = decode_scores(new_net, end_points, self.num_class, self.num_heading_bin, self.num_size_cluster, self.mean_size_arr, gcn_pred=cls_prob)
         return end_points
 
 if __name__=='__main__':

@@ -168,7 +168,7 @@ if torch.cuda.device_count() > 1:
   # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
   net = nn.DataParallel(net)
 net.to(device)
-criterion = MODEL.get_loss
+criterion = MODEL.get_loss_gcn
 
 # Load the Adam optimizer
 optimizer = optim.Adam(net.parameters(), lr=BASE_LEARNING_RATE, weight_decay=FLAGS.weight_decay)
