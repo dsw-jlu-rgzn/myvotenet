@@ -38,7 +38,6 @@ sys.path.append(os.path.join(ROOT_DIR, 'models'))
 from pytorch_utils import BNMomentumScheduler
 from tf_visualizer import Visualizer as TfVisualizer
 from ap_helper import APCalculator, parse_predictions, parse_groundtruths
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', default='votenet', help='Model file name [default: votenet]')
 parser.add_argument('--dataset', default='sunrgbd', help='Dataset name. sunrgbd or scannet. [default: sunrgbd]')
@@ -63,8 +62,10 @@ parser.add_argument('--use_color', action='store_true', help='Use RGB color in i
 parser.add_argument('--use_sunrgbd_v2', action='store_true', help='Use V2 box labels for SUN RGB-D dataset')
 parser.add_argument('--overwrite', action='store_true', help='Overwrite existing log and dump folders.')
 parser.add_argument('--dump_results', action='store_true', help='Dump results.')
-FLAGS = parser.parse_args()
+parser.add_argument('--cos_annea', action='store_true', help='Use CosAnnea lr schedule.')
 
+FLAGS = parser.parse_args()
+#FLAGS.cos_annea
 # ------------------------------------------------------------------------- GLOBAL CONFIG BEG
 BATCH_SIZE = FLAGS.batch_size
 NUM_POINT = FLAGS.num_point
@@ -197,6 +198,14 @@ def get_current_lr(epoch):
             lr *= LR_DECAY_RATES[i]
     return lr
 
+
+def get_current_lr_optimizer(optimizer):
+    the_lr = set()
+    for param_group in optimizer.param_groups:
+        the_lr.add(param_group['lr'])
+    return the_lr
+
+
 def adjust_learning_rate(optimizer, epoch):
     lr = get_current_lr(epoch)
     for param_group in optimizer.param_groups:
@@ -213,11 +222,19 @@ CONFIG_DICT = {'remove_empty_box':False, 'use_3d_nms':True,
     'per_class_proposal': True, 'conf_thresh':0.05,
     'dataset_config':DATASET_CONFIG}
 
+#scheduler_cos = torch.optim.lr_scheduler.CosineAnnealingLr(optimizer, T_max=30, eta_min=0)
+IFCOS = FLAGS.cos_annea
+if IFCOS:
+    scheduler_cos = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=30,eta_min=0)
+
 # ------------------------------------------------------------------------- GLOBAL CONFIG END
 
 def train_one_epoch():
     stat_dict = {} # collect statistics
-    adjust_learning_rate(optimizer, EPOCH_CNT)
+    if IFCOS:
+        scheduler_cos.step()
+    else:
+        adjust_learning_rate(optimizer, EPOCH_CNT)
     bnm_scheduler.step() # decay BN momentum
     net.train() # set model to training mode
     for batch_idx, batch_data_label in enumerate(TRAIN_DATALOADER):
@@ -310,7 +327,7 @@ def train(start_epoch):
     for epoch in range(start_epoch, MAX_EPOCH):
         EPOCH_CNT = epoch
         log_string('**** EPOCH %03d ****' % (epoch))
-        log_string('Current learning rate: %f'%(get_current_lr(epoch)))
+        log_string('Current learning rate: %f'%(list(get_current_lr_optimizer(optimizer))[0]))
         log_string('Current BN decay momentum: %f'%(bnm_scheduler.lmbd(bnm_scheduler.last_epoch)))
         log_string(str(datetime.now()))
         # Reset numpy seed.
