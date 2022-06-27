@@ -18,6 +18,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'pointnet2'))
 from pointnet2_modules import PointnetSAModuleVotes
 import pointnet2_utils
+from gat import GATLayer, GAT
 #from gmm_conv import GMMConv
 def decode_scores(net, end_points, num_class, num_heading_bin, num_size_cluster, mean_size_arr, gcn_pred=None):
     net_transposed = net.transpose(2,1) # (batch_size, 1024, ..)
@@ -91,7 +92,14 @@ class ProposalModule(nn.Module):
         self.sg_conv_2 = torch.nn.Conv1d(256,128,1)
         self.conv3_5 = torch.nn.Conv1d(256,128,1)
         self.bn3 = torch.nn.BatchNorm1d(128)
-
+        self.GAT = GAT(num_of_layers=2,
+              num_heads_per_layer=[8,1],
+              num_features_per_layer=[128, 128, 128],
+              add_skip_connection=False,
+              bias=True,
+              dropout=0.6,
+              log_attention_weights=False
+              )
 
     def _region_classification(self, features, base_xyz):
         #residual_center = self.predict_center(features)# (batch_size, 128, 256)
@@ -156,38 +164,37 @@ class ProposalModule(nn.Module):
         f = torch.ones_like(z)
         # represent = torch.randn(8,256,128).to(device)
         for batch_id in range(batch_size):
-            center_ = center_pred[batch_id]
+            #center_ = center_pred[batch_id]
             relation_ = relation[batch_id]
             # coord_i[batch_id] = center_[relation_[0]]
             # coord_j[batch_id] = center_[relation_[1]]
-            coord_i = center_[relation_[0]]
-            coord_j = center_[relation_[1]]
-            d = torch.sqrt((coord_i[:, 0] - coord_j[:, 0]) ** 2 + (coord_i[:, 1] - coord_j[:, 1]) ** 2 + (coord_i[:, 2] - coord_j[:, 2]) ** 2)
-            theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
-            #theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
-            theta_z = torch.atan2((coord_j[:, 0] - coord_i[:, 0]), (coord_j[:, 2] - coord_i[:, 2]))
-            U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
-
-            u = relation_[0]
-            v = relation_[1]
+            # coord_i = center_[relation_[0]]
+            # coord_j = center_[relation_[1]]
+            # d = torch.sqrt((coord_i[:, 0] - coord_j[:, 0]) ** 2 + (coord_i[:, 1] - coord_j[:, 1]) ** 2 + (coord_i[:, 2] - coord_j[:, 2]) ** 2)
+            # theta_y = torch.atan2((coord_j[:, 1] - coord_i[:, 1]), (coord_j[:, 0] - coord_i[:, 0]))
+            # #theta_z = torch.atan2((coord_j[:, 2] - coord_i[:, 2]), (coord_j[:, 0] - coord_i[:, 0]))
+            # theta_z = torch.atan2((coord_j[:, 0] - coord_i[:, 0]), (coord_j[:, 2] - coord_i[:, 2]))
+            # U = torch.stack([d, theta_y, theta_z], dim=1).to(device)
+            # u = relation_[0]
+            # v = relation_[1]
             feature = represent[batch_id]
-            pseudo = U
-            g = dgl.DGLGraph()
-            g.add_nodes(256)
-            g.add_edges(v,u)
-
+            #pseudo = U
+            # g = dgl.DGLGraph()
+            # g.add_nodes(256)
+            # g.add_edges(v,u)
+            f[batch_id], _ = self.GAT((feature,relation_ ))
             #print(g.in_degrees())
             #f[batch_id] = self.GMM(g, feature, pseudo)
-            f[batch_id] = feature
+            #f[batch_id] = feature
 
             #f[batch_id] = self.gaussian(represent[batch_id], relation_, U)
             #f[batch_id] = torch.randn(256,128).to(device)
         f2 = F.relu(self.sg_conv_1(f.transpose(2,1)))
         h = F.relu(self.sg_conv_2(f2))
         #h = torch.ones_like(h)
-        # new_net = torch.cat([net, h],dim=1)
-        # new_net =  F.relu(self.bn3(self.conv3_5(new_net)))
-        new_net = net + h
+        new_net = torch.cat([net, h],dim=1)
+        new_net =  F.relu(self.bn3(self.conv3_5(new_net)))
+        #new_net = net + h
 
         new_net = F.relu(self.bn1(self.conv1(new_net)))
         new_net = F.relu(self.bn2(self.conv2(new_net)))#b*128*256

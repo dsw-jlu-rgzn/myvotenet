@@ -1,6 +1,7 @@
 import torch.nn as nn
 from torch.optim import Adam
-
+import torch
+import numpy
 
 class GAT(torch.nn.Module):
     """
@@ -311,3 +312,28 @@ class GATLayer(torch.nn.Module):
             out_nodes_features += self.bias
 
         return out_nodes_features if self.activation is None else self.activation(out_nodes_features)
+if __name__=='__main__':
+    gat = GAT(num_of_layers=2,
+              num_heads_per_layer=[8,1],
+              num_features_per_layer=[128, 128, 128],
+              add_skip_connection=False,
+              bias=True,
+              dropout=0.6,
+              log_attention_weights=False
+              ).cuda()
+    GATLayer = GATLayer(num_in_features=128, num_out_features=128, num_of_heads=5).cuda()
+    z = torch.rand(2, 128, 256)
+    z = z.transpose(2, 1)
+    print(z.shape)
+    eps = torch.bmm(z, z.transpose(2, 1))
+    _, indices = torch.topk(eps, k=16, dim=1)
+    represent = torch.randn(2, 256, 128)
+    relation = torch.empty(2, 2, 16 * 256, dtype=torch.long)
+    relation[:, 0] = torch.Tensor(list(range(256)) * 16).unsqueeze(0).repeat(2, 1)
+    relation[:, 1] = indices.view(2, -1)
+    print(relation.shape)
+    for batch in range(2):
+        relation_ = relation[batch].cuda()
+        represent_ = represent[batch].cuda()
+        new_repre, edge_index = gat((represent_, relation_))
+        print(new_repre.shape)
